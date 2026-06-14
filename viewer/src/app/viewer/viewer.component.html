@@ -1,0 +1,113 @@
+<div class="toolbar">
+  <button class="back-btn" (click)="goBack()">← Worklist</button>
+
+  <div class="series-info">
+    <strong>Study:</strong> {{ studyUID | slice:0:24 }}...
+    &nbsp;|&nbsp;
+    <strong>Series:</strong> {{ seriesUID | slice:0:24 }}...
+  </div>
+
+  <!-- Tool group -->
+  <div class="tool-group">
+    <button
+      class="tool-btn"
+      [class.active]="activeTool === 'wl'"
+      (click)="setTool('wl')"
+      title="Window / Level — drag left/right for width, up/down for center">
+      W/L
+    </button>
+    <button
+      class="tool-btn"
+      [class.active]="activeTool === 'pan'"
+      (click)="setTool('pan')"
+      title="Pan — drag to move image">
+      Pan
+    </button>
+    <button
+      class="tool-btn"
+      [class.active]="activeTool === 'zoom'"
+      (click)="setTool('zoom')"
+      title="Zoom — drag up to zoom in, down to zoom out">
+      Zoom
+    </button>
+    <button class="tool-btn" (click)="resetView()" title="Reset view">Reset</button>
+  </div>
+
+  <span class="wl-display">{{ wlLabel }}</span>
+
+  <!-- Frame scroll buttons -->
+  <div class="tool-group">
+    <button class="tool-btn" (click)="scrollFrame(-1)" [disabled]="currentFrameIndex === 0">‹</button>
+    <span style="color:#64748b; font-size:0.8rem; padding:0 4px;">{{ frameLabel }}</span>
+    <button class="tool-btn" (click)="scrollFrame(1)" [disabled]="currentFrameIndex === frames.length - 1">›</button>
+  </div>
+
+  <!-- AI button -->
+  <button
+    class="ai-btn"
+    (click)="runAiAnalysis()"
+    [disabled]="aiStatus === 'pending' || aiStatus === 'running'">
+    {{ aiStatus === 'pending' || aiStatus === 'running' ? 'Analysing...' : '🔬 AI Analyse' }}
+  </button>
+
+  @if (aiStatus !== 'idle') {
+    <span class="ai-status" [class]="'ai-status ' + aiStatus">
+      {{ aiStatus | uppercase }}
+    </span>
+  }
+</div>
+
+<!-- Viewport -->
+<div class="viewport-area" #viewportArea>
+
+  <!-- DICOM/synthetic canvas -->
+  <canvas #dicomCanvas class="dicom-canvas"></canvas>
+
+  <!-- AI overlay canvas (absolutely positioned on top) -->
+  <canvas #overlayCanvas class="dicom-canvas overlay-canvas"></canvas>
+
+  <!-- HUD top-left: tool mode -->
+  <div class="hud">
+    Tool: {{ activeTool | uppercase }}<br>
+    Zoom: {{ zoom | number:'1.2-2' }}x
+  </div>
+
+  <!-- HUD top-right: patient / series metadata -->
+  <div class="hud-right">
+    {{ studyUID | slice:0:20 }}<br>
+    Frame {{ frameLabel }}
+  </div>
+
+  <!-- Loading overlay -->
+  @if (loadingFrames) {
+    <div class="loading-overlay">Loading series...</div>
+  }
+
+  @if (frameLoadError) {
+    <div class="loading-overlay" style="color:#ef5350;">
+      {{ frameLoadError }}
+    </div>
+  }
+
+  <!-- Scroll hint -->
+  <div class="scrollbar-hint">↑↓ scroll to change frame</div>
+
+  <!-- AI result banner -->
+  @if (aiStatus === 'done' && aiResult) {
+    <div style="
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(27,94,32,0.9);
+      color: #a5d6a7;
+      padding: 6px 20px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      pointer-events: none;
+    ">
+      AI: {{ aiResult.results.length }} finding(s) detected in {{ aiResult.processing_time_ms | number:'1.0-0' }}ms
+    </div>
+  }
+
+</div>

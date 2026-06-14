@@ -1,0 +1,118 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-imaging}
+      POSTGRES_USER: ${POSTGRES_USER:-imaging}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-imaging_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-imaging}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  orthanc:
+    image: orthancteam/orthanc:24.1.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ORTHANC__POSTGRESQL__HOST: postgres
+      ORTHANC__POSTGRESQL__PORT: "5432"
+      ORTHANC__POSTGRESQL__DATABASE: ${POSTGRES_DB:-imaging}
+      ORTHANC__POSTGRESQL__USERNAME: ${POSTGRES_USER:-imaging}
+      ORTHANC__POSTGRESQL__PASSWORD: ${POSTGRES_PASSWORD:-imaging_secret}
+      ORTHANC__REGISTERED_USERS: |
+        {"${ORTHANC_USERNAME:-admin}": "${ORTHANC_PASSWORD:-orthanc}"}
+      ORTHANC__DICOM_WEB__ENABLE: "true"
+      ORTHANC__DICOM_WEB__ROOT: "/dicom-web/"
+    volumes:
+      - orthanc_data:/var/lib/orthanc/db
+    ports:
+      - "8042:8042"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8042/system"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  imaging-api:
+    build:
+      context: ./imaging-api
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      orthanc:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-imaging}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-imaging}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-imaging_secret}
+      ORTHANC_BASE_URL: http://orthanc:8042
+      ORTHANC_USERNAME: ${ORTHANC_USERNAME:-admin}
+      ORTHANC_PASSWORD: ${ORTHANC_PASSWORD:-orthanc}
+      AI_INFERENCE_URL: http://ai-inference:8000
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-ai-results}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  ai-inference:
+    build:
+      context: ./ai-inference
+      dockerfile: Dockerfile
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-ai-results}
+    ports:
+      - "8000:8000"
+
+  viewer:
+    build:
+      context: ./viewer
+      dockerfile: Dockerfile
+    depends_on:
+      - imaging-api
+    ports:
+      - "4200:80"
+
+volumes:
+  postgres_data:
+  minio_data:
+  orthanc_data:

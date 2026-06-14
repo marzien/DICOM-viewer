@@ -1,0 +1,87 @@
+<div class="worklist-container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">AGFA <span>NX</span></div>
+    <h1>Imaging Worklist</h1>
+  </div>
+
+  <!-- Search / Filter bar -->
+  <div class="search-bar">
+    <label>Patient</label>
+    <input
+      type="text"
+      placeholder="Search patient..."
+      [(ngModel)]="patientFilter"
+      (ngModelChange)="applyFilter()"
+    />
+
+    <label>Date</label>
+    <input
+      type="text"
+      placeholder="YYYY-MM-DD"
+      [(ngModel)]="dateFilter"
+      (ngModelChange)="applyFilter()"
+    />
+
+    <label>Modality</label>
+    <input
+      type="text"
+      placeholder="CT, MR, PT..."
+      [(ngModel)]="modalityFilter"
+      (ngModelChange)="applyFilter()"
+    />
+
+    <button class="refresh-btn" (click)="loadStudies()">⟳ Refresh</button>
+  </div>
+
+  <!-- Loading -->
+  @if (loading) {
+    <div class="loading">Loading studies...</div>
+  }
+
+  <!-- Error (non-fatal — demo data shown) -->
+  @if (error && !loading) {
+    <div class="error-msg">{{ error }}<br><small>Showing demo data.</small></div>
+  }
+
+  <!-- Study table -->
+  @if (!loading) {
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Patient Name</th>
+            <th>Patient ID</th>
+            <th>Study Date</th>
+            <th>Modality</th>
+            <th>Description</th>
+            <th>Study UID</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (study of filteredStudies; track study.studyUID) {
+            <tr class="clickable" (click)="openViewer(study)">
+              <td class="patient-name">{{ study.patientName }}</td>
+              <td class="patient-id">{{ study.patientID }}</td>
+              <td class="study-date">{{ study.studyDate }}</td>
+              <td>
+                @for (mod of getModalityBadges(study.modalities); track mod) {
+                  <span class="modality-badge">{{ mod }}</span>
+                }
+              </td>
+              <td>{{ study.studyDescription }}</td>
+              <td class="patient-id">{{ study.studyUID | slice:0:20 }}...</td>
+            </tr>
+          }
+          @empty {
+            <tr>
+              <td colspan="6" class="empty">No studies match the current filter.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+
+</div>
