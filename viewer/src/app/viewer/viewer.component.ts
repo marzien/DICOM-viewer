@@ -283,23 +283,33 @@ export class ViewerComponent implements OnInit, AfterViewInit, OnDestroy {
 
     this.dicomWeb.searchInstances(this.studyUID, this.seriesUID).subscribe({
       next: (instances) => {
-        this.frames = instances
-          .sort((a, b) => {
-            const na = Number(dicomStr(a['00200013'])) || 0;
-            const nb = Number(dicomStr(b['00200013'])) || 0;
-            return na - nb;
-          })
-          .map((inst, idx) => {
-            const uid = dicomStr(inst['00080018']);
-            return {
-              instanceUID: uid,
-              frameNumber: 1,
-              imageUrl: this.dicomWeb.frameUrl(
-                this.studyUID, this.seriesUID, uid, 1,
-                this.windowCenter, this.windowWidth
-              ),
-            };
-          });
+        const sorted = instances.sort((a, b) => {
+          const na = Number(dicomStr(a['00200013'])) || 0;
+          const nb = Number(dicomStr(b['00200013'])) || 0;
+          return na - nb;
+        });
+
+        // Pick window/level from the first instance's DICOM metadata if present
+        if (sorted.length > 0) {
+          const wc = Number(dicomStr((sorted[0] as any)['00281050']));
+          const ww = Number(dicomStr((sorted[0] as any)['00281051']));
+          if (wc && ww) {
+            this.windowCenter = wc;
+            this.windowWidth = ww;
+          }
+        }
+
+        this.frames = sorted.map(inst => {
+          const uid = dicomStr(inst['00080018']);
+          return {
+            instanceUID: uid,
+            frameNumber: 1,
+            imageUrl: this.dicomWeb.frameUrl(
+              this.studyUID, this.seriesUID, uid, 1,
+              this.windowCenter, this.windowWidth
+            ),
+          };
+        });
 
         this.loadingFrames = false;
         if (this.frames.length > 0) this.loadCurrentFrame();

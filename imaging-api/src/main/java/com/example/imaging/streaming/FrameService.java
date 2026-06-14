@@ -1,22 +1,20 @@
 package com.example.imaging.streaming;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
-import org.dcm4che3.data.UID;
-import org.dcm4che3.imageio.codec.TransferSyntaxType;
 import org.dcm4che3.io.DicomInputStream;
-import org.dcm4che3.util.SafeClose;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.awt.image.DataBufferShort;
-import java.awt.image.DataBufferUShort;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -44,6 +42,7 @@ public class FrameService {
     private static final int JPEG_QUALITY = 85;
 
     private final RestClient orthanc;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     public FrameService(@Qualifier("orthancRestClient") RestClient orthanc) {
         this.orthanc = orthanc;
@@ -75,14 +74,32 @@ public class FrameService {
     // ── private helpers ──────────────────────────────────────────────────────
 
     /**
-     * Fetches raw DICOM bytes for a single frame from Orthanc REST API.
-     * Path: /instances/{instanceUID}/frames/{frame-0based}/raw
+     * Fetches the full DICOM file for an instance from Orthanc.
+     *
+     * Orthanc's non-DICOMweb REST API uses its own internal UUID, not SOP Instance UIDs.
+     * We resolve the SOP UID → internal ID via POST /tools/lookup, then fetch /instances/{id}/file.
      */
-    private byte[] fetchRawFrame(String instanceUID, int frameNumber) {
-        // Orthanc uses 0-based frame indices
-        int orthancFrame = frameNumber - 1;
-        String path = "/instances/" + instanceUID + "/frames/" + orthancFrame + "/raw";
-        log.debug("Fetching raw frame: {}", path);
+    private byte[] fetchRawFrame(String sopInstanceUID, int frameNumber) throws IOException {
+        // 1. Resolve SOP UID → Orthanc internal ID
+        String lookupJson = orthanc.post()
+                .uri("/tools/lookup")
+                .contentType(MediaType.TEXT_PLAIN)
+                .body(sopInstanceUID)
+                .retrieve()
+                .body(String.class);
+
+        JsonNode results = mapper.readTree(lookupJson);
+        if (results == null || !results.isArray() || results.isEmpty()) {
+            throw new IOException("Instance not found in Orthanc: " + sopInstanceUID);
+        }
+        String internalId = results.get(0).path("ID").asText();
+        if (internalId.isBlank()) {
+            throw new IOException("Empty internal ID returned for: " + sopInstanceUID);
+        }
+
+        // 2. Fetch the full DICOM file (dcm4che parses this cleanly)
+        String path = "/instances/" + internalId + "/file";
+        log.debug("Fetching DICOM file: {} (sopUID={})", path, sopInstanceUID);
 
         return orthanc.get()
                 .uri(path)
