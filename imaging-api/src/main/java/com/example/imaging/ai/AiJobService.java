@@ -7,9 +7,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestTemplate;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -35,19 +39,22 @@ public class AiJobService {
     private static final Logger log = LoggerFactory.getLogger(AiJobService.class);
 
     private final AiJobRepository jobRepository;
-    private final RestClient aiRestClient;
+    private final RestTemplate aiRestTemplate;
     private final MinioClient minioClient;
     private final ObjectMapper objectMapper;
 
     @Value("${minio.bucket}")
     private String minioBucket;
 
+    @Value("${ai.inference.url}")
+    private String aiInferenceUrl;
+
     public AiJobService(AiJobRepository jobRepository,
                         @Qualifier("aiRestClient") RestClient aiRestClient,
                         MinioClient minioClient,
                         ObjectMapper objectMapper) {
         this.jobRepository = jobRepository;
-        this.aiRestClient = aiRestClient;
+        this.aiRestTemplate = new RestTemplate();
         this.minioClient = minioClient;
         this.objectMapper = objectMapper;
     }
@@ -73,13 +80,12 @@ public class AiJobService {
                     "series_uid", seriesUid,
                     "instance_uids", instanceUids
             );
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
 
-            String responseJson = aiRestClient.post()
-                    .uri("/infer")
-                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                    .body(request)
-                    .retrieve()
-                    .body(String.class);
+            String responseJson = aiRestTemplate.postForObject(
+                    aiInferenceUrl + "/infer", entity, String.class);
 
             log.debug("AI inference response for {}: {}", jobId, responseJson);
 
