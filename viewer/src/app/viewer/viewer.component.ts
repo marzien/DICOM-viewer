@@ -236,6 +236,12 @@ export class ViewerComponent implements OnInit, AfterViewInit, OnDestroy {
   private dragStartPanY = 0;
   private dragStartZoom = 1.0;
 
+  // PET-CT fusion state
+  fusionMode = false;
+  fusionOpacity = 0.5;
+  ctFrames: FrameInfo[] = [];         // paired CT series for fusion
+  seriesModality = '';
+
   // AI job state
   aiJobId: string | null = null;
   aiStatus: 'idle' | 'pending' | 'running' | 'done' | 'failed' = 'idle';
@@ -312,8 +318,12 @@ export class ViewerComponent implements OnInit, AfterViewInit, OnDestroy {
         });
 
         this.loadingFrames = false;
-        if (this.frames.length > 0) this.loadCurrentFrame();
-        else this.frameLoadError = 'No instances found in this series.';
+        if (this.frames.length > 0) {
+          this.detectFusionMode();
+          this.loadCurrentFrame();
+        } else {
+          this.frameLoadError = 'No instances found in this series.';
+        }
       },
       error: (err) => {
         this.frameLoadError = `Failed to load series: ${err.message}`;
@@ -338,8 +348,12 @@ export class ViewerComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!frame) return;
 
     if (!frame.imageUrl) {
-      // Demo mode: render synthetic frame on canvas directly
       this.drawSyntheticFrame(this.currentFrameIndex);
+      return;
+    }
+
+    if (this.fusionMode && this.ctFrames.length > 0) {
+      this.loadFusionFrame();
       return;
     }
 
@@ -362,6 +376,118 @@ export class ViewerComponent implements OnInit, AfterViewInit, OnDestroy {
       this.drawSyntheticFrame(this.currentFrameIndex);
     };
     img.src = this.buildFrameUrl(frame);
+  }
+
+  // ── PET-CT fusion ───────────────────────────────────────────────────────────
+
+  private detectFusionMode(): void {
+    this.dicomWeb.searchSeries(this.studyUID).subscribe({
+      next: (allSeries) => {
+        const current = allSeries.find(s => dicomStr(s['0020000E']) === this.seriesUID);
+        this.seriesModality = current ? dicomStr(current['00080060']) : '';
+
+        if (this.seriesModality !== 'PT') return;
+
+        // Find paired CT series in same study
+        const ctSeries = allSeries.find(s => dicomStr(s['00080060']) === 'CT');
+        if (!ctSeries) return;
+
+        const ctSeriesUID = dicomStr(ctSeries['0020000E']);
+        this.dicomWeb.searchInstances(this.studyUID, ctSeriesUID).subscribe({
+          next: (instances) => {
+            this.ctFrames = instances
+              .sort((a, b) => (Number(dicomStr(a['00200013'])) || 0) - (Number(dicomStr(b['00200013'])) || 0))
+              .map(inst => {
+                const uid = dicomStr(inst['00080018']);
+                return {
+                  instanceUID: uid,
+                  frameNumber: 1,
+                  imageUrl: this.dicomWeb.frameUrl(this.studyUID, ctSeriesUID, uid, 1, 40, 400),
+                };
+              });
+            this.fusionMode = true;
+            this.loadCurrentFrame();
+          }
+        });
+      }
+    });
+  }
+
+  private loadFusionFrame(): void {
+    const petFrame = this.frames[this.currentFrameIndex];
+    const ctIdx = Math.min(this.currentFrameIndex, this.ctFrames.length - 1);
+    const ctFrame = this.ctFrames[ctIdx];
+    if (!petFrame || !ctFrame) return;
+
+    const loadImg = (url: string): Promise<HTMLImageElement> =>
+      new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = url;
+      });
+
+    Promise.all([
+      loadImg(this.buildFrameUrl(petFrame)),
+      loadImg(ctFrame.imageUrl),
+    ]).then(([petImg, ctImg]) => {
+      this.renderFusionFrame(petImg, ctImg);
+      this.prefetchAdjacent();
+    }).catch(() => this.drawSyntheticFrame(this.currentFrameIndex));
+  }
+
+  private renderFusionFrame(petImg: HTMLImageElement, ctImg: HTMLImageElement): void {
+    if (!this.canvasRef) return;
+    const canvas = this.canvasRef.nativeElement;
+    const area = this.viewportAreaRef?.nativeElement;
+    canvas.width  = area ? area.clientWidth  : 512;
+    canvas.height = area ? area.clientHeight : 512;
+    const ctx = canvas.getContext('2d')!;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.translate(canvas.width / 2 + this.panX, canvas.height / 2 + this.panY);
+    ctx.scale(this.zoom, this.zoom);
+
+    // 1. Draw CT grayscale as anatomical base
+    ctx.drawImage(ctImg, -ctImg.naturalWidth / 2, -ctImg.naturalHeight / 2);
+
+    // 2. Extract PET pixel values and apply hot colormap
+    const offscreen = document.createElement('canvas');
+    offscreen.width  = petImg.naturalWidth;
+    offscreen.height = petImg.naturalHeight;
+    const offCtx = offscreen.getContext('2d')!;
+    offCtx.drawImage(petImg, 0, 0);
+    const petPixels = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
+
+    const colored = offCtx.createImageData(offscreen.width, offscreen.height);
+    for (let i = 0; i < petPixels.data.length; i += 4) {
+      const v = petPixels.data[i] / 255;          // normalized 0–1
+      const [r, g, b] = this.hotColormap(v);
+      colored.data[i]     = r;
+      colored.data[i + 1] = g;
+      colored.data[i + 2] = b;
+      // Only paint pixels with meaningful uptake; scale alpha by opacity slider
+      colored.data[i + 3] = v > 0.08 ? Math.round(this.fusionOpacity * 255) : 0;
+    }
+    offCtx.putImageData(colored, 0, 0);
+
+    ctx.drawImage(offscreen, -offscreen.width / 2, -offscreen.height / 2);
+    ctx.restore();
+
+    this.renderOverlay();
+  }
+
+  /** Standard PET "hot" colormap: black → red → yellow → white */
+  private hotColormap(v: number): [number, number, number] {
+    if (v < 0.33) return [Math.round(v / 0.33 * 255), 0, 0];
+    if (v < 0.66) return [255, Math.round((v - 0.33) / 0.33 * 255), 0];
+    return [255, 255, Math.round((v - 0.66) / 0.34 * 255)];
+  }
+
+  setFusionOpacity(value: number): void {
+    this.fusionOpacity = value;
+    if (this.fusionMode) this.loadFusionFrame();
   }
 
   private buildFrameUrl(frame: FrameInfo): string {

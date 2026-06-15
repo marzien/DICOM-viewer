@@ -538,6 +538,17 @@ def mri_spine_slice(i, n):
     return img
 
 
+def ct_wholebody_slice(i, n):
+    """Low-dose CT for PET attenuation correction — 256x256, whole body."""
+    t = i / max(n - 1, 1)
+    # Upper half = chest anatomy, lower half = abdomen
+    if t < 0.5:
+        full = ct_chest_slice(int(t * 2 * (n - 1)), n)
+    else:
+        full = ct_abdomen_slice(int((t - 0.5) * 2 * (n - 1)), n)
+    return full[::2, ::2]   # downsample 512→256 to match PET resolution
+
+
 def pet_ct_slice(i, n):
     """
     PET-CT (SUV map overlaid on CT):
@@ -710,6 +721,21 @@ PATIENTS = [
         "date_offset": -1,
         "series": [
             {
+                "desc": "CT Whole Body - Attenuation Correction",
+                "modality": "CT",
+                "sop_class": CTImageStorage,
+                "gen": ct_wholebody_slice,
+                "n": 40,
+                "window_center": 40,
+                "window_width": 400,
+                "rescale_intercept": 0,
+                "pixel_spacing": (3.9, 3.9),
+                "slice_thickness": 5.0,
+                "rows": 256,
+                "cols": 256,
+                "number": 1,
+            },
+            {
                 "desc": "PET Whole Body FDG",
                 "modality": "PT",
                 "sop_class": NM_IMAGE_STORAGE,
@@ -722,7 +748,7 @@ PATIENTS = [
                 "slice_thickness": 5.0,
                 "rows": 256,
                 "cols": 256,
-                "number": 1,
+                "number": 2,
             },
         ],
     },
